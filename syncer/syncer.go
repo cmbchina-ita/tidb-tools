@@ -23,6 +23,8 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/satori/go.uuid"
+	"github.com/siddontang/go-mysql/mysql"
 	"github.com/siddontang/go-mysql/replication"
 	"github.com/siddontang/go/sync2"
 	"golang.org/x/net/context"
@@ -109,6 +111,10 @@ func (s *Syncer) Start() error {
 	err := s.meta.Load()
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	if s.cfg.EnableGTID && s.meta.GTID() == "" {
+		return errors.Errorf("should configure binlog gtid infomation in directory %s", s.cfg.Meta)
 	}
 
 	s.wg.Add(1)
@@ -370,8 +376,8 @@ func (s *Syncer) checkWait(job *job) bool {
 }
 
 func (s *Syncer) addJob(job *job) error {
-	if job.tp == xid {
-		s.meta.Save(job.pos, false)
+	if job.tp == xid || job.tp == gtid {
+		s.meta.Save(job.pos, job.gtid, false)
 		return nil
 	}
 
@@ -385,7 +391,7 @@ func (s *Syncer) addJob(job *job) error {
 	if wait {
 		s.jobWg.Wait()
 
-		err := s.meta.Save(job.pos, true)
+		err := s.meta.Save(job.pos, job.gtid, true)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -508,7 +514,7 @@ func (s *Syncer) run() error {
 	// support regex
 	s.genRegexMap()
 
-	streamer, err := s.syncer.StartSync(s.meta.Pos())
+	streamer, err := s.getBinlogStreamer()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -551,7 +557,7 @@ func (s *Syncer) run() error {
 			pos.Name = string(ev.NextLogName)
 			pos.Pos = uint32(ev.Position)
 
-			err = s.meta.Save(pos, true)
+			err = s.meta.Save(pos, "", true)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -678,8 +684,31 @@ func (s *Syncer) run() error {
 			pos.Pos = e.Header.LogPos
 			job := newJob(xid, "", nil, "", false, pos)
 			s.addJob(job)
+		case *replication.GTIDEvent:
+			pos.Pos = e.Header.LogPos
+			u, err := uuid.FromBytes(ev.SID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = s.handelGTID(fmt.Sprintf("%s:%d", u.String(), ev.GNO), pos)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		case *replication.MariadbGTIDEvent:
+			pos.Pos = e.Header.LogPos
+			err = s.handelGTID(ev.GTID.String(), pos)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
+}
+
+func (s *Syncer) handelGTID(gtid string, pos mysql.Position) error {
+	log.Infof("[gtid]%s", gtid)
+	job := newGTID(gtid, pos)
+	err := s.addJob(job)
+	return errors.Trace(err)
 }
 
 func (s *Syncer) genRegexMap() {
@@ -757,6 +786,30 @@ func (s *Syncer) printStatus() {
 			s.lastCount.Set(total)
 			s.lastTime = time.Now()
 		}
+	}
+}
+
+func (s *Syncer) getBinlogStreamer() (*replication.BinlogStreamer, error) {
+
+	if s.cfg.EnableGTID {
+		var f func(string) (mysql.GTIDSet, error)
+		switch s.cfg.FromDBType {
+		case "mysql":
+			f = mysql.ParseMysqlGTIDSet
+		case "mariadb":
+			f = mysql.ParseMariadbGTIDSet
+		default:
+			return nil, errors.Errorf("wrong source database type that support gtid", s.cfg.FromDBType)
+		}
+
+		gtidSet, err := f(s.meta.GTID())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		return s.syncer.StartSyncGTID(gtidSet)
+	} else {
+		return s.syncer.StartSync(s.meta.Pos())
 	}
 }
 
