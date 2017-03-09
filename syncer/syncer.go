@@ -376,8 +376,8 @@ func (s *Syncer) checkWait(job *job) bool {
 }
 
 func (s *Syncer) addJob(job *job) error {
-	if job.tp == xid || job.tp == gtid {
-		s.meta.Save(job.pos, job.gtid, false)
+	if job.tp == xid {
+		s.meta.Save(job.pos, "", false)
 		return nil
 	}
 
@@ -531,6 +531,7 @@ func (s *Syncer) run() error {
 	go s.printStatus()
 
 	pos := s.meta.Pos()
+	gtid := s.meta.GTID()
 
 	for {
 		ctx, cancel := context.WithTimeout(s.ctx, eventTimeout)
@@ -594,7 +595,7 @@ func (s *Syncer) run() error {
 				}
 
 				for i := range sqls {
-					job := newJob(insert, sqls[i], args[i], keys[i], true, pos)
+					job := newJob(insert, sqls[i], args[i], keys[i], true, pos, gtid)
 					err = s.addJob(job)
 					if err != nil {
 						return errors.Trace(err)
@@ -609,7 +610,7 @@ func (s *Syncer) run() error {
 				}
 
 				for i := range sqls {
-					job := newJob(update, sqls[i], args[i], keys[i], true, pos)
+					job := newJob(update, sqls[i], args[i], keys[i], true, pos, gtid)
 					err = s.addJob(job)
 					if err != nil {
 						return errors.Trace(err)
@@ -624,7 +625,7 @@ func (s *Syncer) run() error {
 				}
 
 				for i := range sqls {
-					job := newJob(del, sqls[i], args[i], keys[i], true, pos)
+					job := newJob(del, sqls[i], args[i], keys[i], true, pos, gtid)
 					err = s.addJob(job)
 					if err != nil {
 						return errors.Trace(err)
@@ -670,7 +671,7 @@ func (s *Syncer) run() error {
 
 				log.Infof("[ddl][start]%s[pos]%v[next pos]%v[schema]%s", sql, lastPos, pos, string(ev.Schema))
 
-				job := newJob(ddl, sql, nil, "", false, pos)
+				job := newJob(ddl, sql, nil, "", false, pos, gtid)
 				err = s.addJob(job)
 				if err != nil {
 					return errors.Trace(err)
@@ -682,7 +683,7 @@ func (s *Syncer) run() error {
 			}
 		case *replication.XIDEvent:
 			pos.Pos = e.Header.LogPos
-			job := newJob(xid, "", nil, "", false, pos)
+			job := newJob(xid, "", nil, "", false, pos, gtid)
 			s.addJob(job)
 		case *replication.GTIDEvent:
 			pos.Pos = e.Header.LogPos
@@ -690,25 +691,11 @@ func (s *Syncer) run() error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = s.handelGTID(fmt.Sprintf("%s:%d", u.String(), ev.GNO), pos)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			gtid = fmt.Sprintf("%s:%d", u.String(), ev.GNO)
 		case *replication.MariadbGTIDEvent:
-			pos.Pos = e.Header.LogPos
-			err = s.handelGTID(ev.GTID.String(), pos)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			gtid = ev.GTID.String()
 		}
 	}
-}
-
-func (s *Syncer) handelGTID(gtid string, pos mysql.Position) error {
-	log.Infof("[gtid]%s", gtid)
-	job := newGTID(gtid, pos)
-	err := s.addJob(job)
-	return errors.Trace(err)
 }
 
 func (s *Syncer) genRegexMap() {
