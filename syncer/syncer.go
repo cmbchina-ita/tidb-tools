@@ -114,7 +114,7 @@ func (s *Syncer) Start() error {
 	}
 
 	if s.cfg.EnableGTID && s.meta.GTID() == "" {
-		return errors.Errorf("should configure binlog gtid infomation in directory %s", s.cfg.Meta)
+		return errors.Errorf("should configure binlog gtid infomation at file %s", s.cfg.Meta)
 	}
 
 	s.wg.Add(1)
@@ -786,7 +786,7 @@ func (s *Syncer) getBinlogStreamer() (*replication.BinlogStreamer, error) {
 		case "mariadb":
 			f = mysql.ParseMariadbGTIDSet
 		default:
-			return nil, errors.Errorf("wrong source database type that support gtid", s.cfg.FromDBType)
+			return nil, errors.Errorf("wrong source database type %s", s.cfg.FromDBType)
 		}
 
 		gtidSet, err := f(s.meta.GTID())
