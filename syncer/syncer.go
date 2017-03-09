@@ -795,9 +795,9 @@ func (s *Syncer) getBinlogStreamer() (*replication.BinlogStreamer, error) {
 		}
 
 		return s.syncer.StartSyncGTID(gtidSet)
-	} else {
-		return s.syncer.StartSync(s.meta.Pos())
 	}
+
+	return s.syncer.StartSync(s.meta.Pos())
 }
 
 func (s *Syncer) isClosed() bool {
