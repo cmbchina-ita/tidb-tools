@@ -54,15 +54,15 @@ type job struct {
 	key   string
 	retry bool
 	pos   gmysql.Position
-	gtid  []string
+	gtid  []string // 0: server ID/Domain ID+server ID 1: gtid
 }
 
-func newJob(tp opType, sql string, args []interface{}, key string, retry bool, pos gmysql.Position, gtid string) *job {
-	return &job{tp: tp, sql: sql, args: args, key: key, retry: retry, pos: pos, gtid: gtid}
+func newJob(tp opType, sql string, args []interface{}, key string, retry bool, pos gmysql.Position) *job {
+	return &job{tp: tp, sql: sql, args: args, key: key, retry: retry, pos: pos}
 }
 
-func newGTIDJob(ID string, gtid string) *job {
-	return &job{gtid: []string{ID, gtid}}
+func newGTIDJob(ID string, gtid string, pos gmysql.Position) *job {
+	return &job{gtid: []string{ID, gtid}, pos: pos}
 }
 
 type column struct {

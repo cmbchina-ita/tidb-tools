@@ -527,7 +527,6 @@ func (s *Syncer) run() error {
 	go s.printStatus()
 
 	pos := s.meta.Pos()
-	gtid := s.meta.GTID()
 
 	for {
 		ctx, cancel := context.WithTimeout(s.ctx, eventTimeout)
@@ -591,7 +590,7 @@ func (s *Syncer) run() error {
 				}
 
 				for i := range sqls {
-					job := newJob(insert, sqls[i], args[i], keys[i], true, pos, gtid)
+					job := newJob(insert, sqls[i], args[i], keys[i], true, pos)
 					err = s.addJob(job)
 					if err != nil {
 						return errors.Trace(err)
@@ -606,7 +605,7 @@ func (s *Syncer) run() error {
 				}
 
 				for i := range sqls {
-					job := newJob(update, sqls[i], args[i], keys[i], true, pos, gtid)
+					job := newJob(update, sqls[i], args[i], keys[i], true, pos)
 					err = s.addJob(job)
 					if err != nil {
 						return errors.Trace(err)
@@ -621,7 +620,7 @@ func (s *Syncer) run() error {
 				}
 
 				for i := range sqls {
-					job := newJob(del, sqls[i], args[i], keys[i], true, pos, gtid)
+					job := newJob(del, sqls[i], args[i], keys[i], true, pos)
 					err = s.addJob(job)
 					if err != nil {
 						return errors.Trace(err)
@@ -667,7 +666,7 @@ func (s *Syncer) run() error {
 
 				log.Infof("[ddl][start]%s[pos]%v[next pos]%v[schema]%s", sql, lastPos, pos, string(ev.Schema))
 
-				job := newJob(ddl, sql, nil, "", false, pos, gtid)
+				job := newJob(ddl, sql, nil, "", false, pos)
 				err = s.addJob(job)
 				if err != nil {
 					return errors.Trace(err)
@@ -679,7 +678,7 @@ func (s *Syncer) run() error {
 			}
 		case *replication.XIDEvent:
 			pos.Pos = e.Header.LogPos
-			job := newJob(xid, "", nil, "", false, pos, gtid)
+			job := newJob(xid, "", nil, "", false, pos)
 			s.addJob(job)
 		case *replication.GTIDEvent:
 			pos.Pos = e.Header.LogPos
@@ -687,13 +686,17 @@ func (s *Syncer) run() error {
 			if err != nil {
 				return errors.Trace(err)
 			}
+
 			gtid := fmt.Sprintf("%s:1-%d", u.String(), ev.GNO)
-			job := newGTIDJob(u.String(), gtid)
+			log.Debugf("gtid infomation: binlog %v, gtid %s", pos, gtid)
+			job := newGTIDJob(u.String(), gtid, pos)
 			s.addJob(job)
 		case *replication.MariadbGTIDEvent:
+			pos.Pos = e.Header.LogPos
 			gtid := ev.GTID.String()
+			log.Debugf("mariadb gtid infomation: binlog %v, gtid %s", pos, gtid)
 			id := fmt.Sprintf("%d-%d", ev.GTID.DomainID, ev.GTID.ServerID)
-			job := newGTIDJob(id, gtid)
+			job := newGTIDJob(id, gtid, pos)
 			s.addJob(job)
 		}
 	}
@@ -800,7 +803,7 @@ func (s *Syncer) getBinlogStreamer() (*replication.BinlogStreamer, error) {
 
 		gtidSet, err := f(strings.Join(gtids, ","))
 		if err != nil {
-			log.Errorf("parse gtid %s error %v", gtid, err)
+			log.Errorf("parse gtid %v error %v", gtids, err)
 			return s.syncer.StartSync(s.meta.Pos())
 		}
 

@@ -145,5 +145,5 @@ func (lm *LocalMeta) Check() bool {
 
 func (lm *LocalMeta) String() string {
 	pos := lm.Pos()
-	return fmt.Sprintf("binlog-name = %s, binlog-pos = %d, binlog-gtid = %s", pos.Name, pos.Pos, lm.BinlogGTID)
+	return fmt.Sprintf("binlog-name = %s, binlog-pos = %d, binlog-gtid = %v", pos.Name, pos.Pos, lm.BinlogGTID)
 }
