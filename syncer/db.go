@@ -57,8 +57,8 @@ type job struct {
 	gtid  []string
 }
 
-func newJob(tp opType, sql string, args []interface{}, key string, retry bool, pos gmysql.Position) *job {
-	return &job{tp: tp, sql: sql, args: args, key: key, retry: retry, pos: pos}
+func newJob(tp opType, sql string, args []interface{}, key string, retry bool, pos gmysql.Position, gtid string) *job {
+	return &job{tp: tp, sql: sql, args: args, key: key, retry: retry, pos: pos, gtid: gtid}
 }
 
 func newGTIDJob(ID string, gtid string) *job {
