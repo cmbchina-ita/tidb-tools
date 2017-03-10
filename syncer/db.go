@@ -44,6 +44,7 @@ const (
 	del
 	ddl
 	xid
+	gtid
 )
 
 type job struct {
@@ -53,11 +54,15 @@ type job struct {
 	key   string
 	retry bool
 	pos   gmysql.Position
-	gtid  string
+	gtid  []string
 }
 
-func newJob(tp opType, sql string, args []interface{}, key string, retry bool, pos gmysql.Position, gtid string) *job {
-	return &job{tp: tp, sql: sql, args: args, key: key, retry: retry, pos: pos, gtid: gtid}
+func newJob(tp opType, sql string, args []interface{}, key string, retry bool, pos gmysql.Position) *job {
+	return &job{tp: tp, sql: sql, args: args, key: key, retry: retry, pos: pos}
+}
+
+func newGTIDJob(ID string, gtid string) *job {
+	return &job{gtid: []string{ID, gtid}}
 }
 
 type column struct {
