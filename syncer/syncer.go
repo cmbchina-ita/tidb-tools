@@ -373,7 +373,7 @@ func (s *Syncer) checkWait(job *job) bool {
 
 func (s *Syncer) addJob(job *job) error {
 	if job.tp == xid || job.tp == gtid {
-		s.meta.Save(job.pos, job.gtid, false)
+		s.meta.Save(job.pos, job.gtid.uniqueServerID, job.gtid.gtid, false)
 		return nil
 	}
 
@@ -387,7 +387,7 @@ func (s *Syncer) addJob(job *job) error {
 	if wait {
 		s.jobWg.Wait()
 
-		err := s.meta.Save(job.pos, job.gtid, true)
+		err := s.meta.Save(job.pos, job.gtid.uniqueServerID, job.gtid.gtid, true)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -553,7 +553,7 @@ func (s *Syncer) run() error {
 			pos.Name = string(ev.NextLogName)
 			pos.Pos = uint32(ev.Position)
 
-			err = s.meta.Save(pos, nil, true)
+			err = s.meta.Save(pos, "", "", true)
 			if err != nil {
 				return errors.Trace(err)
 			}

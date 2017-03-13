@@ -38,7 +38,7 @@ type Meta interface {
 	Load() error
 
 	// Save saves meta information.
-	Save(pos mysql.Position, gtid []string, force bool) error
+	Save(pos mysql.Position, id string, gtid string, force bool) error
 
 	// Check checks whether we should save meta.
 	Check() bool
@@ -83,7 +83,7 @@ func (lm *LocalMeta) Load() error {
 }
 
 // Save implements Meta.Save interface.
-func (lm *LocalMeta) Save(pos mysql.Position, gtid []string, force bool) error {
+func (lm *LocalMeta) Save(pos mysql.Position, id string, gtid string, force bool) error {
 	lm.Lock()
 	defer lm.Unlock()
 
@@ -94,7 +94,7 @@ func (lm *LocalMeta) Save(pos mysql.Position, gtid []string, force bool) error {
 		if len(gtid) != 2 {
 			return errors.Errorf("gtid data is corruption %v", gtid)
 		}
-		lm.BinlogGTID[gtid[0]] = gtid[1]
+		lm.BinlogGTID[id] = gtid
 	}
 
 	if force {

@@ -47,6 +47,11 @@ const (
 	gtid
 )
 
+type gtidInfo struct {
+	uniqueServerID string // mysql: server uuid/mariadb Domain ID + server ID
+	gtid           string
+}
+
 type job struct {
 	tp    opType
 	sql   string
@@ -54,7 +59,7 @@ type job struct {
 	key   string
 	retry bool
 	pos   gmysql.Position
-	gtid  []string // 0: server ID/Domain ID+server ID 1: gtid
+	gtid  *gtidInfo
 }
 
 func newJob(tp opType, sql string, args []interface{}, key string, retry bool, pos gmysql.Position) *job {
@@ -62,7 +67,7 @@ func newJob(tp opType, sql string, args []interface{}, key string, retry bool, p
 }
 
 func newGTIDJob(ID string, gtid string, pos gmysql.Position) *job {
-	return &job{gtid: []string{ID, gtid}, pos: pos}
+	return &job{gtid: &gtidInfo{ID, gtid}, pos: pos}
 }
 
 type column struct {
