@@ -45,6 +45,7 @@ const (
 	del
 	ddl
 	xid
+	gtid
 )
 
 type gtidInfo struct {
@@ -62,8 +63,16 @@ type job struct {
 	gtid  *gtidInfo
 }
 
-func newJob(tp opType, sql string, args []interface{}, key string, retry bool, gtid *gtidInfo, pos gmysql.Position) *job {
-	return &job{tp: tp, sql: sql, args: args, key: key, retry: retry, gtid: gtid, pos: pos}
+func newJob(tp opType, sql string, args []interface{}, key string, retry bool, pos gmysql.Position) *job {
+	return &job{tp: tp, sql: sql, args: args, key: key, retry: retry, pos: pos}
+}
+
+func newGTIDJob(id string, gtid string, pos gmysql.Position) *job {
+	return &job{tp: gtid, gtid: &gtidInfo{id: id, gtid: gtid}, pos: pos}
+}
+
+func newXIDJob(pos gmysql.Position) *job {
+	return &job{tp: xid, pos: pos}
 }
 
 func isNotRotateEvent(e *replication.BinlogEvent) bool {
@@ -73,13 +82,6 @@ func isNotRotateEvent(e *replication.BinlogEvent) bool {
 	default:
 		return true
 	}
-}
-
-func forwardGtid(p *gtidInfo, c *gtidInfo, id, gtid string) {
-	p.id = c.id
-	p.gtid = c.gtid
-	c.id = id
-	c.gtid = gtid
 }
 
 type column struct {
