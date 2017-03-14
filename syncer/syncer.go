@@ -510,7 +510,7 @@ func (s *Syncer) run() error {
 	// support regex
 	s.genRegexMap()
 
-	streamer, err := s.getBinlogStreamer()
+	streamer, isGTIDMode, err := s.getBinlogStreamer()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -528,6 +528,11 @@ func (s *Syncer) run() error {
 
 	pos := s.meta.Pos()
 
+	var alreadyIgnoreAllRotateEvent bool
+	var (
+		id   string
+		gtid string
+	)
 	for {
 		ctx, cancel := context.WithTimeout(s.ctx, eventTimeout)
 		e, err := streamer.GetEvent(ctx)
@@ -542,6 +547,14 @@ func (s *Syncer) run() error {
 
 		if err != nil {
 			return errors.Trace(err)
+		}
+
+		// if gtid mode, should ignore the rotate events at head of event stream
+		if !alreadyIgnoreAllRotateEvent && isGTIDMode {
+			alreadyIgnoreAllRotateEvent = s.isNotRotateEvent(e)
+			if !alreadyIgnoreAllRotateEvent {
+				continue
+			}
 		}
 
 		binlogMetaPos.Set(float64(e.Header.LogPos))
@@ -686,18 +699,20 @@ func (s *Syncer) run() error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-
-			gtid := fmt.Sprintf("%s:1-%d", u.String(), ev.GNO)
-			log.Debugf("gtid infomation: binlog %v, gtid %s", pos, gtid)
-			job := newGTIDJob(u.String(), gtid, pos)
-			s.addJob(job)
-		case *replication.MariadbGTIDEvent:
-			pos.Pos = e.Header.LogPos
-			gtid := ev.GTID.String()
-			log.Debugf("mariadb gtid infomation: binlog %v, gtid %s", pos, gtid)
-			id := fmt.Sprintf("%d-%d", ev.GTID.DomainID, ev.GTID.ServerID)
+			// while meet GTIDEvent, save previous gtid to prevent losing binlog from syncer panicing
 			job := newGTIDJob(id, gtid, pos)
 			s.addJob(job)
+			id = u.String()
+			gtid = fmt.Sprintf("%s:1-%d", u.String(), ev.GNO)
+			log.Debugf("gtid infomation: binlog %v, gtid %s", pos, gtid)
+		case *replication.MariadbGTIDEvent:
+			pos.Pos = e.Header.LogPos
+			job := newGTIDJob(id, gtid, pos)
+			s.addJob(job)
+
+			id = fmt.Sprintf("%d-%d", ev.GTID.DomainID, ev.GTID.ServerID)
+			gtid = ev.GTID.String()
+			log.Debugf("mariadb gtid infomation: binlog %v, gtid %s", pos, gtid)
 		}
 	}
 }
@@ -780,7 +795,7 @@ func (s *Syncer) printStatus() {
 	}
 }
 
-func (s *Syncer) getBinlogStreamer() (*replication.BinlogStreamer, error) {
+func (s *Syncer) getBinlogStreamer() (*replication.BinlogStreamer, bool, error) {
 	gtidMap := s.meta.GTID()
 
 	if len(gtidMap) != 0 {
@@ -804,19 +819,33 @@ func (s *Syncer) getBinlogStreamer() (*replication.BinlogStreamer, error) {
 		gtidSet, err := f(strings.Join(gtids, ","))
 		if err != nil {
 			log.Errorf("parse gtid %v error %v", gtids, err)
-			return s.syncer.StartSync(s.meta.Pos())
+			return s.startSyncByPosition()
 		}
 
 		streamer, err := s.syncer.StartSyncGTID(gtidSet)
 		if err != nil {
 			log.Errorf("start sync in gtid mode error %v", err)
-			return s.syncer.StartSync(s.meta.Pos())
+			return s.startSyncByPosition()
 		}
 
-		return streamer, err
+		return streamer, true, err
 	}
 
-	return s.syncer.StartSync(s.meta.Pos())
+	return s.startSyncByPosition()
+}
+
+func (s *Syncer) startSyncByPosition() (*replication.BinlogStreamer, bool, error) {
+	streamer, err := s.syncer.StartSync(s.meta.Pos())
+	return streamer, false, errors.Trace(err)
+}
+
+func (s *Syncer) isNotRotateEvent(event *replication.BinlogEvent) bool {
+	switch ev := e.Event.(type) {
+	case *replication.RotateEvent:
+		return false
+	default:
+		return true
+	}
 }
 
 func (s *Syncer) isClosed() bool {

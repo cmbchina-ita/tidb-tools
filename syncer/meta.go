@@ -91,9 +91,6 @@ func (lm *LocalMeta) Save(pos mysql.Position, id string, gtid string, force bool
 	lm.BinLogPos = pos.Pos
 
 	if len(gtid) != 0 {
-		if len(gtid) != 2 {
-			return errors.Errorf("gtid data is corruption %v", gtid)
-		}
 		lm.BinlogGTID[id] = gtid
 	}
 
