@@ -350,7 +350,7 @@ func (s *Syncer) addCount(tp opType, n int64) {
 		sqlJobsTotal.WithLabelValues("del").Add(float64(n))
 	case ddl:
 		sqlJobsTotal.WithLabelValues("ddl").Add(float64(n))
-	case xid:
+	case xid, gtid:
 		// skip xid jobs
 	default:
 		panic("unreachable")

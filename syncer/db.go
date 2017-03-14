@@ -59,7 +59,7 @@ type job struct {
 	key   string
 	retry bool
 	pos   gmysql.Position
-	gtid  *gtidInfo
+	gtid  gtidInfo
 }
 
 func newJob(tp opType, sql string, args []interface{}, key string, retry bool, pos gmysql.Position) *job {
@@ -67,7 +67,7 @@ func newJob(tp opType, sql string, args []interface{}, key string, retry bool, p
 }
 
 func newGTIDJob(ID string, gtid string, pos gmysql.Position) *job {
-	return &job{gtid: &gtidInfo{ID, gtid}, pos: pos}
+	return &job{gtid: gtidInfo{ID, gtid}, pos: pos}
 }
 
 type column struct {
