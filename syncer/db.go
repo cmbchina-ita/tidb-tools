@@ -67,8 +67,8 @@ func newJob(tp opType, sql string, args []interface{}, key string, retry bool, p
 	return &job{tp: tp, sql: sql, args: args, key: key, retry: retry, pos: pos}
 }
 
-func newGTIDJob(id string, gtid string, pos gmysql.Position) *job {
-	return &job{tp: gtid, gtid: &gtidInfo{id: id, gtid: gtid}, pos: pos}
+func newGTIDJob(id string, gtidStr string, pos gmysql.Position) *job {
+	return &job{tp: gtid, gtid: &gtidInfo{id: id, gtid: gtidStr}, pos: pos}
 }
 
 func newXIDJob(pos gmysql.Position) *job {
