@@ -350,7 +350,7 @@ func (s *Syncer) addCount(tp opType, n int64) {
 		sqlJobsTotal.WithLabelValues("del").Add(float64(n))
 	case ddl:
 		sqlJobsTotal.WithLabelValues("ddl").Add(float64(n))
-	case xid, gtid:
+	case xid:
 		// skip xid jobs
 	default:
 		panic("unreachable")
@@ -372,13 +372,15 @@ func (s *Syncer) checkWait(job *job) bool {
 }
 
 func (s *Syncer) addJob(job *job) error {
-	if job.tp == xid || job.tp == gtid {
-		s.meta.Save(job.pos, job.gtid.uniqueServerID, job.gtid.gtid, false)
-		return nil
+	switch job.tp {
+	case xid:
+		return s.meta.Save(job.pos, job.gtid.id, job.gtid.gtid, false)
+	case ddl:
+		// while meet ddl, we should wait all dmls finished firstly
+		s.jobWg.Wait()
 	}
 
 	s.jobWg.Add(1)
-
 	log.Debugf("add job [sql]%s; [position]%v", job.sql, job.pos)
 	idx := int(genHashKey(job.key)) % s.cfg.WorkerCount
 	s.jobs[idx] <- job
@@ -386,8 +388,7 @@ func (s *Syncer) addJob(job *job) error {
 	wait := s.checkWait(job)
 	if wait {
 		s.jobWg.Wait()
-
-		err := s.meta.Save(job.pos, job.gtid.uniqueServerID, job.gtid.gtid, true)
+		err := s.meta.Save(job.pos, job.gtid.id, job.gtid.gtid, true)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -527,12 +528,11 @@ func (s *Syncer) run() error {
 	go s.printStatus()
 
 	pos := s.meta.Pos()
+	// while meet GTIDEvent, save previous gtid to prevent losing binlog from syncer panicing
+	previousGTID := &gtidInfo{}
+	currentGTID := &gtidInfo{}
 
 	var alreadyIgnoreAllRotateEvent bool
-	var (
-		id   string
-		gtid string
-	)
 	for {
 		ctx, cancel := context.WithTimeout(s.ctx, eventTimeout)
 		e, err := streamer.GetEvent(ctx)
@@ -551,7 +551,7 @@ func (s *Syncer) run() error {
 
 		// if gtid mode, should ignore the rotate events at head of event stream
 		if !alreadyIgnoreAllRotateEvent && isGTIDMode {
-			alreadyIgnoreAllRotateEvent = s.isNotRotateEvent(e)
+			alreadyIgnoreAllRotateEvent = isNotRotateEvent(e)
 			if !alreadyIgnoreAllRotateEvent {
 				continue
 			}
@@ -603,7 +603,7 @@ func (s *Syncer) run() error {
 				}
 
 				for i := range sqls {
-					job := newJob(insert, sqls[i], args[i], keys[i], true, pos)
+					job := newJob(insert, sqls[i], args[i], keys[i], true, previousGTID, pos)
 					err = s.addJob(job)
 					if err != nil {
 						return errors.Trace(err)
@@ -618,7 +618,7 @@ func (s *Syncer) run() error {
 				}
 
 				for i := range sqls {
-					job := newJob(update, sqls[i], args[i], keys[i], true, pos)
+					job := newJob(update, sqls[i], args[i], keys[i], true, previousGTID, pos)
 					err = s.addJob(job)
 					if err != nil {
 						return errors.Trace(err)
@@ -633,7 +633,7 @@ func (s *Syncer) run() error {
 				}
 
 				for i := range sqls {
-					job := newJob(del, sqls[i], args[i], keys[i], true, pos)
+					job := newJob(del, sqls[i], args[i], keys[i], true, previousGTID, pos)
 					err = s.addJob(job)
 					if err != nil {
 						return errors.Trace(err)
@@ -679,7 +679,7 @@ func (s *Syncer) run() error {
 
 				log.Infof("[ddl][start]%s[pos]%v[next pos]%v[schema]%s", sql, lastPos, pos, string(ev.Schema))
 
-				job := newJob(ddl, sql, nil, "", false, pos)
+				job := newJob(ddl, sql, nil, "", false, previousGTID, pos)
 				err = s.addJob(job)
 				if err != nil {
 					return errors.Trace(err)
@@ -691,7 +691,8 @@ func (s *Syncer) run() error {
 			}
 		case *replication.XIDEvent:
 			pos.Pos = e.Header.LogPos
-			job := newJob(xid, "", nil, "", false, pos)
+			// XID Event is `commit`, so we can guarantee the current transaction is finished
+			job := newJob(xid, "", nil, "", false, currentGTID, pos)
 			s.addJob(job)
 		case *replication.GTIDEvent:
 			pos.Pos = e.Header.LogPos
@@ -699,19 +700,16 @@ func (s *Syncer) run() error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			// while meet GTIDEvent, save previous gtid to prevent losing binlog from syncer panicing
-			job := newGTIDJob(id, gtid, pos)
-			s.addJob(job)
-			id = u.String()
-			gtid = fmt.Sprintf("%s:1-%d", u.String(), ev.GNO)
+
+			id := u.String()
+			gtid := fmt.Sprintf("%s:1-%d", u.String(), ev.GNO)
+			forwardGtid(previousGTID, currentGTID, id, gtid)
 			log.Debugf("gtid infomation: binlog %v, gtid %s", pos, gtid)
 		case *replication.MariadbGTIDEvent:
 			pos.Pos = e.Header.LogPos
-			job := newGTIDJob(id, gtid, pos)
-			s.addJob(job)
-
-			id = fmt.Sprintf("%d-%d", ev.GTID.DomainID, ev.GTID.ServerID)
-			gtid = ev.GTID.String()
+			id := fmt.Sprintf("%d-%d", ev.GTID.DomainID, ev.GTID.ServerID)
+			gtid := ev.GTID.String()
+			forwardGtid(previousGTID, currentGTID, id, gtid)
 			log.Debugf("mariadb gtid infomation: binlog %v, gtid %s", pos, gtid)
 		}
 	}
@@ -809,7 +807,7 @@ func (s *Syncer) getBinlogStreamer() (*replication.BinlogStreamer, bool, error) 
 		case "mariadb":
 			f = mysql.ParseMariadbGTIDSet
 		default:
-			return nil, errors.Errorf("wrong source database type %s", s.cfg.FromDBType)
+			return nil, false, errors.Errorf("wrong source database type %s", s.cfg.FromDBType)
 		}
 
 		for _, val := range gtidMap {
@@ -837,15 +835,6 @@ func (s *Syncer) getBinlogStreamer() (*replication.BinlogStreamer, bool, error) 
 func (s *Syncer) startSyncByPosition() (*replication.BinlogStreamer, bool, error) {
 	streamer, err := s.syncer.StartSync(s.meta.Pos())
 	return streamer, false, errors.Trace(err)
-}
-
-func (s *Syncer) isNotRotateEvent(event *replication.BinlogEvent) bool {
-	switch ev := e.Event.(type) {
-	case *replication.RotateEvent:
-		return false
-	default:
-		return true
-	}
 }
 
 func (s *Syncer) isClosed() bool {

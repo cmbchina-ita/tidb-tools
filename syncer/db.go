@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/terror"
 	gmysql "github.com/siddontang/go-mysql/mysql"
+	"github.com/siddontang/go-mysql/replication"
 )
 
 type opType byte
@@ -44,12 +45,11 @@ const (
 	del
 	ddl
 	xid
-	gtid
 )
 
 type gtidInfo struct {
-	uniqueServerID string // mysql: server uuid/mariadb Domain ID + server ID
-	gtid           string
+	id   string // mysql: server uuid/mariadb Domain ID + server ID
+	gtid string
 }
 
 type job struct {
@@ -59,15 +59,27 @@ type job struct {
 	key   string
 	retry bool
 	pos   gmysql.Position
-	gtid  gtidInfo
+	gtid  *gtidInfo
 }
 
-func newJob(tp opType, sql string, args []interface{}, key string, retry bool, pos gmysql.Position) *job {
-	return &job{tp: tp, sql: sql, args: args, key: key, retry: retry, pos: pos}
+func newJob(tp opType, sql string, args []interface{}, key string, retry bool, gtid *gtidInfo, pos gmysql.Position) *job {
+	return &job{tp: tp, sql: sql, args: args, key: key, retry: retry, gtid: gtid, pos: pos}
 }
 
-func newGTIDJob(ID string, gtid string, pos gmysql.Position) *job {
-	return &job{gtid: gtidInfo{ID, gtid}, pos: pos}
+func isNotRotateEvent(e *replication.BinlogEvent) bool {
+	switch e.Event.(type) {
+	case *replication.RotateEvent:
+		return false
+	default:
+		return true
+	}
+}
+
+func forwardGtid(p *gtidInfo, c *gtidInfo, id, gtid string) {
+	p.id = c.id
+	p.gtid = c.gtid
+	c.id = id
+	c.gtid = gtid
 }
 
 type column struct {
